@@ -1,0 +1,89 @@
+#!/bin/sh
+#
+# This is the turnstile s6 backend. It accepts the action as its first
+# argument, which is either "ready", "run", or "stop". In case of "run", it's
+# invoked directly through /bin/sh as if it was a login shell, and therefore
+# it has acccess to shell profile, and the shebang is functionally useless but
+# should be preserved as a convention. For "ready", it's a regular shell.
+#
+# Arguments for "ready":
+#
+# ready_sv: path to the readiness service
+#
+# Arguments for "run":
+#
+# ready_p:  path to named pipe (fifo) that should be poked with a string; this
+#           will be passed to the "ready" script of the sequence as its sole
+#           argument (here this is a control socket path)
+# srvdir:   an internal directory that can be used by the service manager
+#           for any purpose (usually to keep track of its state)
+# confdir:  the path where turnstile's configuration data reside, used
+#           to source the configuration file
+#
+# Arguments for "stop":
+#
+# pid:      the PID of the service manager to stop (gracefully); it should
+#           terminate the services it's running and then stop itself
+#
+# License: BSD-2-Clause
+#
+
+# TODO:
+: "${USER:="$(id -un)"}"
+: "${UID:="$(id -u)"}"
+: "${HOME:="$(homeof ${USER})"}"
+: "${services_dir:="${HOME}/.local/share/s6"}"
+: "${XDG_RUNTIME_DIR:="/run/user/${UID}"}"
+S6_DIR="${XDG_RUNTIME_DIR}"
+
+case "${1}" in
+    run) ;;
+    ready)
+        s6-rc-init -c "${services_dir}/rc/compiled" -l "${S6_DIR}/s6-rc" "${S6_DIR}/service"
+        exec s6-rc -l "${S6_DIR}/s6-rc" -up change default
+        ;;
+    stop)
+        exec kill -s TERM "$2"
+        ;;
+    *)
+        exit 32
+        ;;
+esac
+
+S6_READY_PIPE="${2}"
+# S6_DIR="${3}"
+S6_CONF="${4}/s6.conf"
+
+if [ ! -p "${S6_READY_PIPE}" ]; then
+    echo "s6: invalid input argument(s)" >&2
+    exit 69
+fi
+
+if [ -z "${HOME}" ] || [ ! -d "${HOME}" ]; then
+    echo "s6: invalid home directory" >&2
+    exit 70
+fi
+
+if [ -d "${S6_DIR}/s6-rc" ]; then
+    echo "s6: live directory shouldn't exist" >&2
+    exit 71
+fi
+
+shift $#
+
+# source the conf
+[ -r "${S6_CONF}" ] && . "${S6_CONF}"
+
+: "${service_env_dir:="${XDG_RUNTIME_DIR}/env"}"
+mkdir -p "${service_env_dir}" > /dev/null 2>&1
+
+# source system profile mainly for profile.d
+# do it before switching to set -e etc.
+[ -r /etc/profile ] && . /etc/profile
+
+# be strict
+set -e
+
+mkdir -p "${S6_DIR}/service" > /dev/null 2>&1
+
+exec env ENV_DIR="${service_env_dir}" s6-svscan -d 3 "${S6_DIR}/service" 3> "${S6_READY_PIPE}" 
