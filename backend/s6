@@ -79,7 +79,17 @@ mkdir -p "${service_env_dir}" > /dev/null 2>&1
 
 # source system profile mainly for profile.d
 # do it before switching to set -e etc.
-[ -r /etc/profile ] && . /etc/profile
+if [ -r /etc/profile ]; then
+    OLD_PATH="${PATH}"
+
+    unset PATH
+    . /etc/profile
+fi
+
+if [ -z "${PATH}" ]; then
+    PATH="${OLD_PATH}"
+    export PATH
+fi
 
 # be strict
 set -e
